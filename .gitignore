@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+
+# Data
+data/
+
+# Model/checkpoint files
+*.pt
+*.pth
+*.pkl
+checkpoints/
+
+# Generated predictions/results
+*_predictions.jsonl
+runs/
+logs/
+tensorboard/
+
+# SLURM output
+*.out
+*.err
