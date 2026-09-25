@@ -136,17 +136,15 @@ def compute_metrics(
     Returns:
         A dict with at least the keys `"token_f1"` and `"span_f1"`.
     """
-    # ------------------------------------------------------------------
-    # TODO: implement
-    #
-    # `scorer.py` exposes (confirmed, not speculative):
-    #     token_scores(y_true, y_pred) -> {"precision": ..., "recall": ..., "f1": ...}
-    #     span_scores(y_true, y_pred)  -> {"precision": ..., "recall": ..., "f1": ...}
-    # Note the arg order is (y_true, y_pred) i.e. (gold, predictions), not
-    # (predictions, gold). Pull `["f1"]` out of each to populate this
-    # function's `token_f1`/`span_f1` return keys.
-    # ------------------------------------------------------------------
-    raise NotImplementedError("compute_metrics() is left for you to implement.")
+    from scorer import span_scores, token_scores
+
+    token_metrics = token_scores(gold, predictions)
+    span_metrics = span_scores(gold, predictions)
+
+    return {
+        "token_f1": float(token_metrics["f1"]),
+        "span_f1": float(span_metrics["f1"]),
+    }
 
 
 def main() -> None:

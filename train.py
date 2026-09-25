@@ -199,10 +199,116 @@ def train_loop(
     Returns:
         Final dev-set slot F1 (float). `main()` will print what you return.
     """
-    # ------------------------------------------------------------------
-    # TODO: implement
-    # ------------------------------------------------------------------
-    raise NotImplementedError("train_loop() is left for you to implement.")
+    import os
+
+    from scorer import span_scores
+
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
+
+    if args.model == "crf":
+        train_sentences = [example.tokens for example in train_data]
+        train_labels = [example.slots for example in train_data]
+
+        model.fit(train_sentences, train_labels)
+
+        dev_sentences = [example.tokens for example in dev_data]
+        dev_labels = [example.slots for example in dev_data]
+        dev_predictions = model.predict(dev_sentences)
+
+        dev_f1 = span_scores(dev_labels, dev_predictions)["f1"]
+
+        import joblib
+
+        joblib.dump(model.model, os.path.join(args.checkpoint_dir, "crf_model.pkl"))
+        return float(dev_f1)
+
+    if args.model == "bilstm":
+        vocab = build_vocab([example.tokens for example in train_data])
+        token_to_id = vocab["token_to_id"]
+        unk_id = token_to_id.get("<UNK>", 0)
+
+        tag_set = sorted({tag for example in train_data for tag in example.slots})
+        tag_to_id = {tag: idx for idx, tag in enumerate(tag_set)}
+        id_to_tag = {idx: tag for tag, idx in tag_to_id.items()}
+
+        model.vocab = type(
+            "Vocab",
+            (),
+            {"token_to_id": token_to_id, "id_to_tag": id_to_tag},
+        )()
+
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        loss_fn = torch.nn.CrossEntropyLoss(ignore_index=-100)
+
+        examples = []
+        for example in train_data:
+            token_ids = [token_to_id.get(tok, unk_id) for tok in example.tokens]
+            label_ids = [tag_to_id[tag] for tag in example.slots]
+            examples.append((token_ids, label_ids))
+
+        best_dev_f1 = -1.0
+        best_state = None
+
+        for _ in range(10):
+            model.train()
+
+            for start in range(0, len(examples), 32):
+                batch = examples[start : start + 32]
+                max_len = max(len(tok_ids) for tok_ids, _ in batch)
+
+                token_tensor = torch.zeros((len(batch), max_len), dtype=torch.long)
+                label_tensor = torch.full((len(batch), max_len), -100, dtype=torch.long)
+                lengths = []
+
+                for i, (tok_ids, lab_ids) in enumerate(batch):
+                    token_tensor[i, : len(tok_ids)] = torch.tensor(tok_ids, dtype=torch.long)
+                    label_tensor[i, : len(lab_ids)] = torch.tensor(lab_ids, dtype=torch.long)
+                    lengths.append(len(tok_ids))
+
+                lengths_tensor = torch.tensor(lengths, dtype=torch.long)
+
+                optimizer.zero_grad()
+                logits = model(token_tensor, lengths_tensor)
+                logits = logits.permute(0, 2, 1)
+                loss = loss_fn(logits, label_tensor)
+                loss.backward()
+                optimizer.step()
+
+            model.eval()
+            dev_gold = []
+            dev_pred = []
+
+            with torch.no_grad():
+                for example in dev_data:
+                    ids = [token_to_id.get(tok, unk_id) for tok in example.tokens]
+                    length = torch.tensor([len(ids)], dtype=torch.long)
+                    padded = torch.tensor(ids, dtype=torch.long).unsqueeze(0)
+
+                    logits = model(padded, length)
+                    pred_ids = logits[0, : length[0], :].argmax(dim=-1).tolist()
+                    dev_pred.append([id_to_tag[idx] for idx in pred_ids])
+                    dev_gold.append(example.slots)
+
+            current_f1 = span_scores(dev_gold, dev_pred)["f1"]
+
+            if current_f1 > best_dev_f1:
+                best_dev_f1 = current_f1
+                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+
+        if best_state is not None:
+            model.load_state_dict(best_state)
+
+        checkpoint = {
+            "state_dict": model.state_dict(),
+            "vocab_size": vocab["vocab_size"],
+            "tagset_size": len(tag_set),
+            "vocab": {"token_to_id": token_to_id, "id_to_tag": id_to_tag},
+        }
+
+        torch.save(checkpoint, os.path.join(args.checkpoint_dir, "bilstm_model.pt"))
+        return float(best_dev_f1)
+
+    raise ValueError(f"Unknown model type: {args.model!r}")
 
 
 def main() -> None:

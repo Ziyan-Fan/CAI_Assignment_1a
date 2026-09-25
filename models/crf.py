@@ -8,6 +8,7 @@ the Part A assignment — look for the `# TODO: implement` block below.
 """
 
 from __future__ import annotations
+from pyexpat import features
 from typing import Any, cast
 import sklearn_crfsuite
 
@@ -42,10 +43,55 @@ class CRFModel:
             features to consider: word identity, casing, prefixes/suffixes,
             surrounding-token context window, gazetteers if you build them.
         """
-        # ------------------------------------------------------------------
-        # TODO: implement
-        # ------------------------------------------------------------------
-        raise NotImplementedError("extract_features() is left for you to implement.")
+        features = []
+
+        for i, word in enumerate(sentence):
+
+            # Features for the current word
+            word_features = {
+                "word": word.lower(),
+                "isupper": word.isupper(),
+                "istitle": word.istitle(),
+                "isdigit": word.isdigit(),
+
+                "prefix1": word[:1].lower(),
+                "prefix2": word[:2].lower(),
+
+                "suffix1": word[-1:].lower(),
+                "suffix2": word[-2:].lower(),
+                "suffix3": word[-3:].lower(),
+            }
+
+            # Previous word
+            if i > 0:
+                prev_word = sentence[i - 1]
+
+                word_features["prev_word"] = prev_word.lower()
+                word_features["prev_isupper"] = prev_word.isupper()
+                word_features["prev_istitle"] = prev_word.istitle()
+            else:
+                word_features["BOS"] = True
+
+            # Next word
+            if i < len(sentence) - 1:
+                next_word = sentence[i + 1]
+
+                word_features["next_word"] = next_word.lower()
+                word_features["next_isupper"] = next_word.isupper()
+                word_features["next_istitle"] = next_word.istitle()
+            else:
+                word_features["EOS"] = True
+
+            # Two words before
+            if i > 1:
+                word_features["prev2_word"] = sentence[i - 2].lower()
+
+            # Two words after
+            if i < len(sentence) - 2:
+                word_features["next2_word"] = sentence[i + 2].lower()
+
+            features.append(word_features)
+        return features
 
     def fit(self, sentences: list[list[str]], labels: list[list[str]]) -> None:
         """Train CRF on tokenized sentences and their BIO label sequences.
