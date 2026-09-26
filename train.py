@@ -223,6 +223,9 @@ def train_loop(
         return float(dev_f1)
 
     if args.model == "bilstm":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = model.to(device)
+
         vocab = build_vocab([example.tokens for example in train_data])
         token_to_id = vocab["token_to_id"]
         unk_id = token_to_id.get("<UNK>", 0)
@@ -256,16 +259,16 @@ def train_loop(
                 batch = examples[start : start + 32]
                 max_len = max(len(tok_ids) for tok_ids, _ in batch)
 
-                token_tensor = torch.zeros((len(batch), max_len), dtype=torch.long)
-                label_tensor = torch.full((len(batch), max_len), -100, dtype=torch.long)
+                token_tensor = torch.zeros((len(batch), max_len), dtype=torch.long, device=device)
+                label_tensor = torch.full((len(batch), max_len), -100, dtype=torch.long, device=device)
                 lengths = []
 
                 for i, (tok_ids, lab_ids) in enumerate(batch):
-                    token_tensor[i, : len(tok_ids)] = torch.tensor(tok_ids, dtype=torch.long)
-                    label_tensor[i, : len(lab_ids)] = torch.tensor(lab_ids, dtype=torch.long)
+                    token_tensor[i, : len(tok_ids)] = torch.tensor(tok_ids, dtype=torch.long, device=device)
+                    label_tensor[i, : len(lab_ids)] = torch.tensor(lab_ids, dtype=torch.long, device=device)
                     lengths.append(len(tok_ids))
 
-                lengths_tensor = torch.tensor(lengths, dtype=torch.long)
+                lengths_tensor = torch.tensor(lengths, dtype=torch.long, device=device)
 
                 optimizer.zero_grad()
                 logits = model(token_tensor, lengths_tensor)
@@ -281,11 +284,11 @@ def train_loop(
             with torch.no_grad():
                 for example in dev_data:
                     ids = [token_to_id.get(tok, unk_id) for tok in example.tokens]
-                    length = torch.tensor([len(ids)], dtype=torch.long)
-                    padded = torch.tensor(ids, dtype=torch.long).unsqueeze(0)
+                    padded = torch.tensor(ids, dtype=torch.long, device=device).unsqueeze(0)
+                    length = torch.tensor([len(ids)], dtype=torch.long, device=device)
 
                     logits = model(padded, length)
-                    pred_ids = logits[0, : length[0], :].argmax(dim=-1).tolist()
+                    pred_ids = logits[0, : length[0], :].argmax(dim=-1).cpu().tolist()
                     dev_pred.append([id_to_tag[idx] for idx in pred_ids])
                     dev_gold.append(example.slots)
 

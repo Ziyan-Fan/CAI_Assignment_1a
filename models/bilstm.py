@@ -66,10 +66,29 @@ class BiLSTMModel(nn.Module):
             `(batch_size, max_seq_len, tagset_size)` tensor of per-token,
             per-tag logits (unnormalized — softmax/cross-entropy is applied outside this method).
         """
-        # ------------------------------------------------------------------
-        # TODO: implement
-        # ------------------------------------------------------------------
-        raise NotImplementedError("forward() is left for you to implement.")
+        embeddings = self.embedding(sentences_batch)
+        
+        packed_embeddings = torch.nn.utils.rnn.pack_padded_sequence(
+            embeddings,
+            lengths.cpu(),
+            batch_first=True,
+            enforce_sorted=False,
+        )
+        
+        packed_output, _ = self.lstm(packed_embeddings)
+
+        # Convert the packed output back to a padded tensor
+        lstm_output, _ = torch.nn.utils.rnn.pad_packed_sequence(
+            packed_output,
+            batch_first=True,
+            total_length=sentences_batch.size(1),
+        )
+        
+        # Convert each token's BiLSTM output into tag scores
+        logits = self.hidden2tag(lstm_output)
+
+        return logits
+        
 
     def viterbi_decode(
         self, emissions: torch.Tensor, lengths: torch.Tensor
@@ -98,12 +117,52 @@ class BiLSTMModel(nn.Module):
             per input sequence, aligned token-for-token and truncated to
             each sequence's true length.
         """
-        # ------------------------------------------------------------------
-        # TODO: implement (optional bonus)
-        # ------------------------------------------------------------------
-        raise NotImplementedError(
-            "viterbi_decode() is an optional +5 bonus, not implemented by default."
+        if hasattr(self, "vocab") and hasattr(self.vocab, "id_to_tag"):
+            id_to_tag = {
+                int(idx): tag for idx, tag in self.vocab.id_to_tag.items()
+            }
+        else:
+            raise ValueError("Model is missing vocab.id_to_tag")
+
+        transitions = torch.zeros(
+            (emissions.size(-1), emissions.size(-1)),
+            device=emissions.device,
+            dtype=emissions.dtype,
         )
+
+        predictions: list[list[str]] = []
+
+        for batch_idx in range(emissions.size(0)):
+            seq_len = int(lengths[batch_idx].item())
+
+            if seq_len == 0:
+                predictions.append([])
+                continue
+
+            best_scores = emissions[batch_idx, 0].clone()
+            backpointers = torch.zeros(
+                (seq_len, emissions.size(-1)),
+                dtype=torch.long,
+                device=emissions.device,
+            )
+
+            for time_step in range(1, seq_len):
+                score_matrix = best_scores.unsqueeze(1) + transitions
+                best_prev_scores, best_prev_tags = score_matrix.max(dim=0)
+                best_scores = best_prev_scores + emissions[batch_idx, time_step]
+                backpointers[time_step] = best_prev_tags
+
+            last_tag = int(best_scores.argmax().item())
+            best_path = [last_tag]
+
+            for time_step in range(seq_len - 1, 0, -1):
+                last_tag = int(backpointers[time_step, last_tag].item())
+                best_path.append(last_tag)
+
+            best_path.reverse()
+            predictions.append([id_to_tag[tag_id] for tag_id in best_path])
+
+        return predictions
 
     def predict(self, sentences: list[list[str]], vocab: Any) -> list[list[str]]:
         """Predict BIO label sequences for tokenized sentences.
