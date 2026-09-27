@@ -66,28 +66,16 @@ class BiLSTMModel(nn.Module):
             `(batch_size, max_seq_len, tagset_size)` tensor of per-token,
             per-tag logits (unnormalized — softmax/cross-entropy is applied outside this method).
         """
-        embeddings = self.embedding(sentences_batch)
-        
-        packed_embeddings = torch.nn.utils.rnn.pack_padded_sequence(
-            embeddings,
-            lengths.cpu(),
-            batch_first=True,
-            enforce_sorted=False,
+        device = self.embedding.weight.device
+        embedded = self.embedding(sentences_batch.to(device))
+        packed = nn.utils.rnn.pack_padded_sequence(
+            embedded, lengths.detach().cpu(), batch_first=True, enforce_sorted=False
         )
-        
-        packed_output, _ = self.lstm(packed_embeddings)
-
-        # Convert the packed output back to a padded tensor
-        lstm_output, _ = torch.nn.utils.rnn.pad_packed_sequence(
-            packed_output,
-            batch_first=True,
-            total_length=sentences_batch.size(1),
+        encoded, _ = self.lstm(packed)
+        encoded, _ = nn.utils.rnn.pad_packed_sequence(
+            encoded, batch_first=True, total_length=sentences_batch.size(1)
         )
-        
-        # Convert each token's BiLSTM output into tag scores
-        logits = self.hidden2tag(lstm_output)
-
-        return logits
+        return self.hidden2tag(encoded)
         
 
     def viterbi_decode(
@@ -117,52 +105,33 @@ class BiLSTMModel(nn.Module):
             per input sequence, aligned token-for-token and truncated to
             each sequence's true length.
         """
-        if hasattr(self, "vocab") and hasattr(self.vocab, "id_to_tag"):
-            id_to_tag = {
-                int(idx): tag for idx, tag in self.vocab.id_to_tag.items()
-            }
-        else:
-            raise ValueError("Model is missing vocab.id_to_tag")
-
-        transitions = torch.zeros(
-            (emissions.size(-1), emissions.size(-1)),
-            device=emissions.device,
-            dtype=emissions.dtype,
-        )
-
-        predictions: list[list[str]] = []
-
-        for batch_idx in range(emissions.size(0)):
-            seq_len = int(lengths[batch_idx].item())
-
-            if seq_len == 0:
+        vocab = getattr(self, "vocab", None)
+        if vocab is None or not hasattr(vocab, "crf_transitions"):
+            # Retain the supplied predict() fallback for softmax-only models.
+            raise NotImplementedError("No trained CRF transition scores available.")
+        transitions = emissions.new_tensor(vocab.crf_transitions)
+        start = emissions.new_tensor(vocab.crf_start)
+        end = emissions.new_tensor(vocab.crf_end)
+        predictions = []
+        for sequence, length in zip(emissions, lengths.tolist()):
+            if length == 0:
                 predictions.append([])
                 continue
-
-            best_scores = emissions[batch_idx, 0].clone()
-            backpointers = torch.zeros(
-                (seq_len, emissions.size(-1)),
-                dtype=torch.long,
-                device=emissions.device,
-            )
-
-            for time_step in range(1, seq_len):
-                score_matrix = best_scores.unsqueeze(1) + transitions
-                best_prev_scores, best_prev_tags = score_matrix.max(dim=0)
-                best_scores = best_prev_scores + emissions[batch_idx, time_step]
-                backpointers[time_step] = best_prev_tags
-
-            last_tag = int(best_scores.argmax().item())
-            best_path = [last_tag]
-
-            for time_step in range(seq_len - 1, 0, -1):
-                last_tag = int(backpointers[time_step, last_tag].item())
-                best_path.append(last_tag)
-
-            best_path.reverse()
-            predictions.append([id_to_tag[tag_id] for tag_id in best_path])
-
+            scores = start + sequence[0]
+            backpointers = []
+            for timestep in range(1, length):
+                # Rows are previous tags; columns are current tags.
+                best_scores, previous = (scores[:, None] + transitions).max(dim=0)
+                scores = best_scores + sequence[timestep]
+                backpointers.append(previous)
+            tag = int((scores + end).argmax().item())
+            path = [tag]
+            for previous in reversed(backpointers):
+                tag = int(previous[tag].item())
+                path.append(tag)
+            predictions.append([vocab.id_to_tag[tag] for tag in reversed(path)])
         return predictions
+
 
     def predict(self, sentences: list[list[str]], vocab: Any) -> list[list[str]]:
         """Predict BIO label sequences for tokenized sentences.

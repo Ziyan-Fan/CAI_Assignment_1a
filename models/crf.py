@@ -44,53 +44,34 @@ class CRFModel:
             surrounding-token context window, gazetteers if you build them.
         """
         features = []
-
-        for i, word in enumerate(sentence):
-
-            # Features for the current word
-            word_features = {
-                "word": word.lower(),
+        words = [word.lower() for word in sentence]
+        for index, word in enumerate(sentence):
+            token_features = {
+                "bias": 1.0,
+                "word": words[index],
                 "isupper": word.isupper(),
                 "istitle": word.istitle(),
                 "isdigit": word.isdigit(),
-
-                "prefix1": word[:1].lower(),
-                "prefix2": word[:2].lower(),
-
-                "suffix1": word[-1:].lower(),
-                "suffix2": word[-2:].lower(),
-                "suffix3": word[-3:].lower(),
+                "hasdigit": any(char.isdigit() for char in word),
+                "hyphen": "-" in word,
+                "BOS": index == 0,
+                "EOS": index == len(sentence) - 1,
             }
-
-            # Previous word
-            if i > 0:
-                prev_word = sentence[i - 1]
-
-                word_features["prev_word"] = prev_word.lower()
-                word_features["prev_isupper"] = prev_word.isupper()
-                word_features["prev_istitle"] = prev_word.istitle()
-            else:
-                word_features["BOS"] = True
-
-            # Next word
-            if i < len(sentence) - 1:
-                next_word = sentence[i + 1]
-
-                word_features["next_word"] = next_word.lower()
-                word_features["next_isupper"] = next_word.isupper()
-                word_features["next_istitle"] = next_word.istitle()
-            else:
-                word_features["EOS"] = True
-
-            # Two words before
-            if i > 1:
-                word_features["prev2_word"] = sentence[i - 2].lower()
-
-            # Two words after
-            if i < len(sentence) - 2:
-                word_features["next2_word"] = sentence[i + 2].lower()
-
-            features.append(word_features)
+            for size in (1, 2, 3, 4):
+                token_features[f"prefix{size}"] = words[index][:size]
+                token_features[f"suffix{size}"] = words[index][-size:]
+            for offset in (-2, -1, 1, 2):
+                neighbor = index + offset
+                if 0 <= neighbor < len(sentence):
+                    prefix = f"{offset:+d}:"
+                    token_features[prefix + "word"] = words[neighbor]
+                    token_features[prefix + "istitle"] = sentence[neighbor].istitle()
+                    token_features[prefix + "isdigit"] = sentence[neighbor].isdigit()
+            if index > 0:
+                token_features["previous+word"] = "|".join(words[index - 1:index + 1])
+            if index + 1 < len(sentence):
+                token_features["word+next"] = "|".join(words[index:index + 2])
+            features.append(token_features)
         return features
 
     def fit(self, sentences: list[list[str]], labels: list[list[str]]) -> None:

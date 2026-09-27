@@ -1,8 +1,11 @@
 PART D — TEST-SET ERROR ANALYSIS CANDIDATES
 ====================================================================================================
 
-These are 10 automatically selected test-set failures.
-Use the token-level differences to write your own diagnosis for each example.
+CRF checkpoint: checkpoints/final_crf_100
+BiLSTM checkpoint: checkpoints/final_bilstm_100
+
+These are automatically selected test-set failures from the final 100% models.
+Use the token-level differences below to write your own diagnosis for each example.
 
 ====================================================================================================
 Example 1
@@ -24,12 +27,7 @@ Token-level differences:
   token  6: next               gold=B-arrive_date.date_relative  CRF=B-depart_date.date_relative  BiLSTM=B-arrive_date.date_relative
   token  7: saturday           gold=B-arrive_date.day_name       CRF=B-depart_date.day_name       BiLSTM=B-arrive_date.day_name
 
-Your diagnosis:
-The CRF consistently makes mistakes between arrival and departure information. For example, even though the word “arriving” shows that 
-New York City is the destination and “next Saturday” is the arrival date, the CRF still labels “New York City” as fromloc.city_name and 
-“next Saturday” as depart_date. Since all five related tokens are assigned the wrong roles, this suggests the CRF depends too much on 
-local patterns and does not pay enough attention to the earlier clue, “arriving.” On the other hand, the BiLSTM uses this clue correctly 
-to find both the destination and the arrival date.
+In this example, the CRF confuses both the location and date roles. It labels “New York City” as a departure location and “next Saturday” as a departure date, even though the word “arriving” indicates that both should be associated with arrival. Because the CRF relies on manually designed local features and a limited ±2 context window, it may place too much weight on learned lexical and transition patterns and cannot directly connect the earlier word “arriving” with the later date phrase. The BiLSTM, in contrast, can use information from a wider sentence context, allowing it to correctly identify “New York City” as the destination and “next Saturday” as the arrival date. This example suggests that the CRF is more likely to make semantic-role errors when the correct label depends on longer-range context.
 
 
 ====================================================================================================
@@ -52,12 +50,7 @@ Token-level differences:
   token  8: pm                 gold=I-arrive_time.time           CRF=I-depart_time.time           BiLSTM=I-arrive_time.time
 
 Your diagnosis:
-  ________________________________________________
-  This example highlights confusion between arrival and departure. The CRF gets Cleveland as the origin and Kansas City as the destination right, but it labels “Monday before 3 pm” as 
-  the departure time instead of the arrival time, even though the word “arrive” is present. This mistake happens throughout the whole time phrase, which suggests the CRF depends too much 
-  on familiar date and time patterns and does not pay enough attention to earlier clues in the sentence. On the other hand, the BiLSTM model keeps the meaning of “arrive” throughout the 
-  sequence and assigns the correct arrival labels.
-
+ In this example, the CRF correctly identifies Cleveland as the departure city and Kansas City as the destination, but it misclassifies the entire temporal phrase “Monday before 3 pm” as departure information instead of arrival information. The explicit word “arrive” immediately before “Monday” should indicate that the following date and time describe the arrival. However, the CRF predicts depart_date and depart_time labels for all four temporal tokens. This suggests that the CRF has learned strong local patterns for date and time expressions but is less reliable at determining their semantic role from the surrounding verb. The BiLSTM correctly uses the cue “arrive” and maintains that information across the following tokens, labeling the entire temporal phrase as arrival-related. This is another example of the CRF confusing arrival and departure roles even when it correctly detects the boundaries of the relevant slot.
 
 ====================================================================================================
 Example 3
@@ -79,36 +72,30 @@ Token-level differences:
   token  9: pm                 gold=I-arrive_time.time           CRF=I-depart_time.time           BiLSTM=I-arrive_time.time
 
 Your diagnosis:
-The CRF correctly identifies the origin and destination cities, so the error is localized to the temporal role. Even though the phrase 
-“flight arrive Wednesday before 5 pm” clearly establishes an arrival context, the CRF consistently labels all four temporal tokens as 
-depart_date or depart_time. This suggests it has learned strong local patterns for date and time expressions but does not give enough 
-weight to the earlier verb “arrive.” In contrast, the BiLSTM preserves that arrival context across the sequence and correctly labels 
-both the weekday and time expression as arrival-related slots.
+In this example, the CRF correctly identifies the departure city, destination city, and the boundaries of the date and time expression, but it assigns the wrong semantic role to the entire temporal phrase. It labels “Wednesday before 5 pm” as departure information instead of arrival information, even though the sentence contains the explicit cue “arrive.” This suggests that the CRF is good at recognizing local date and time patterns but can still confuse whether those slots refer to departure or arrival. The BiLSTM correctly uses the broader sentence context and the word “arrive” to label all four temporal tokens as arrival-related. This reinforces the pattern seen in the previous examples: the CRF’s main weakness is not finding the span, but determining the correct arrival/departure role from context.
 
 
 ====================================================================================================
 Example 4
-Test index: 777
+Test index: 383
 Case type: CRF wrong, BiLSTM correct
 ====================================================================================================
-Sentence: show me all of the daily flights arriving in denver between 8 pm and 9 pm
+Sentence: find a flight between st. petersburg and charlotte the flight should leave in the afternoon and arrive as soon after 5 pm as possible it should be a nonstop flight
 
-Gold:    ['O', 'O', 'O', 'O', 'O', 'B-flight_days', 'O', 'O', 'O', 'B-toloc.city_name', 'O', 'B-arrive_time.start_time', 'I-arrive_time.start_time', 'O', 'B-arrive_time.end_time', 'I-arrive_time.end_time']
-CRF:     ['O', 'O', 'O', 'O', 'O', 'B-flight_days', 'O', 'O', 'O', 'B-toloc.city_name', 'O', 'B-depart_time.start_time', 'I-depart_time.start_time', 'O', 'B-depart_time.end_time', 'I-depart_time.end_time']
-BiLSTM:  ['O', 'O', 'O', 'O', 'O', 'B-flight_days', 'O', 'O', 'O', 'B-toloc.city_name', 'O', 'B-arrive_time.start_time', 'I-arrive_time.start_time', 'O', 'B-arrive_time.end_time', 'I-arrive_time.end_time']
+Gold:    ['O', 'O', 'O', 'O', 'B-fromloc.city_name', 'I-fromloc.city_name', 'O', 'B-toloc.city_name', 'O', 'O', 'O', 'O', 'O', 'O', 'B-depart_time.period_of_day', 'O', 'O', 'O', 'O', 'B-arrive_time.time_relative', 'B-arrive_time.time', 'I-arrive_time.time', 'O', 'O', 'O', 'O', 'O', 'O', 'B-flight_stop', 'O']
+CRF:     ['O', 'O', 'O', 'O', 'B-fromloc.city_name', 'I-fromloc.city_name', 'O', 'B-toloc.city_name', 'O', 'O', 'O', 'O', 'O', 'O', 'B-depart_time.period_of_day', 'O', 'O', 'O', 'B-toloc.city_name', 'B-depart_time.time_relative', 'B-depart_time.time', 'I-depart_time.time', 'O', 'O', 'O', 'O', 'O', 'O', 'B-flight_stop', 'O']
+BiLSTM:  ['O', 'O', 'O', 'O', 'B-fromloc.city_name', 'I-fromloc.city_name', 'O', 'B-toloc.city_name', 'O', 'O', 'O', 'O', 'O', 'O', 'B-depart_time.period_of_day', 'O', 'O', 'O', 'O', 'B-arrive_time.time_relative', 'B-arrive_time.time', 'I-arrive_time.time', 'O', 'O', 'O', 'O', 'O', 'O', 'B-flight_stop', 'O']
 
 Number of wrong tokens: CRF=4, BiLSTM=0
 
 Token-level differences:
-  token 11: 8                  gold=B-arrive_time.start_time     CRF=B-depart_time.start_time     BiLSTM=B-arrive_time.start_time
-  token 12: pm                 gold=I-arrive_time.start_time     CRF=I-depart_time.start_time     BiLSTM=I-arrive_time.start_time
-  token 14: 9                  gold=B-arrive_time.end_time       CRF=B-depart_time.end_time       BiLSTM=B-arrive_time.end_time
-  token 15: pm                 gold=I-arrive_time.end_time       CRF=I-depart_time.end_time       BiLSTM=I-arrive_time.end_time
+  token 18: soon               gold=O                            CRF=B-toloc.city_name            BiLSTM=O
+  token 19: after              gold=B-arrive_time.time_relative  CRF=B-depart_time.time_relative  BiLSTM=B-arrive_time.time_relative
+  token 20: 5                  gold=B-arrive_time.time           CRF=B-depart_time.time           BiLSTM=B-arrive_time.time
+  token 21: pm                 gold=I-arrive_time.time           CRF=I-depart_time.time           BiLSTM=I-arrive_time.time
 
 Your diagnosis:
-The CRF model correctly picks out Denver as the destination and recognizes the time range “between 8 pm and 9 pm” as separate start and end times. However, it assigns both times to depart_time instead of 
-arrive_time. This means the model understands the structure of the time span but misses the meaning of “arriving” when labeling the times. In contrast, the BiLSTM keeps track of the arrival context throughout 
-the sentence and correctly links both times to the arrival event.
+In this example, the CRF correctly identifies the departure city, destination city, departure-time phrase, and nonstop-flight slot, but it makes several errors around the phrase “arrive as soon after 5 pm as possible.” It incorrectly labels “soon” as a destination city and classifies “after 5 pm” as departure time instead of arrival time. This suggests that the CRF is overly dependent on local lexical patterns and does not consistently use the earlier cue word “arrive” to determine the role of the later time expression. The BiLSTM correctly leaves “soon” untagged and associates “after 5 pm” with arrival, showing that it handles the broader sentence context more effectively. Like the previous examples, this demonstrates that the CRF has difficulty distinguishing arrival and departure roles when the relevant cue and slot are separated by several words.
 
 
 ====================================================================================================
@@ -131,9 +118,7 @@ Token-level differences:
   token 15: afternoon          gold=B-depart_time.period_of_day  CRF=B-depart_time.period_of_day  BiLSTM=B-arrive_time.period_of_day
 
 Your diagnosis:
- It seems that the BiLSTM gives too much weight to the first word "arrive", which causes it to wrongly apply the arrival frame to the later departure date and time expressions. This overgeneralisation also results in an inconsistent prediction 
- in the case of "twenty third", since "twenty" is assigned the label of an arrival date but "third" changes back to a departure date label. On the other hand, the CRF generates a consistent sequence of departure-related labels that agrees with 
- the gold annotation, indicating that its explicit modelling of label transitions helps to ensure consistency between adjacent tokens.
+ The CRF correctly labels the entire sentence, while the BiLSTM incorrectly treats “Saturday April twenty third” and “afternoon” as arrival information rather than departure information. The BiLSTM appears to place too much weight on the earlier word “arrive,” allowing that cue to influence temporal expressions much later in the sentence. In contrast, the CRF correctly associates the date and time with the departure from Las Vegas. This example shows that although the BiLSTM can use long-range context effectively, it can also overgeneralize a strong contextual cue and assign the wrong semantic role to later slots.
 
 
 ====================================================================================================
@@ -155,34 +140,29 @@ Token-level differences:
   token 13: ninth              gold=B-depart_date.day_number     CRF=B-depart_date.day_number     BiLSTM=B-arrive_date.day_number
 
 Your diagnosis:
- The BiLSTM often mislabels the date phrase “saturday april ninth” as an arrival date, even though the gold labels mark it as a departure date. While it correctly finds the origin, destination, and other slots, this mistake only affects the temporal 
- event role, not the whole sentence. Unlike the earlier example, there is no clear word like “arrive” causing the error. This suggests the BiLSTM may have developed a general bias toward labeling dates as arrival dates in similar itinerary cases. 
- In contrast, the CRF consistently labels the phrase as a departure date and matches the gold annotation.
+  The CRF correctly interprets “Saturday April ninth” as the departure date, while the BiLSTM labels the entire date expression as an arrival date. Unlike the earlier CRF failures, there is no explicit arrival cue in this sentence. The common structure “from Salt Lake City to New York on Saturday April ninth” indicates when the requested flight departs, and the CRF successfully captures this local pattern. The BiLSTM instead assigns the wrong semantic role to all three date tokens, suggesting that its broader contextual representation does not always distinguish departure and arrival information correctly when the sentence does not contain an explicit verb such as “leave” or “arrive.”
 
 
 ====================================================================================================
 Example 7
-Test index: 319
+Test index: 821
 Case type: BiLSTM wrong, CRF correct
 ====================================================================================================
-Sentence: show me flights from montreal to orlando and long beach
+Sentence: i need a flight leaving kansas city to chicago leaving next wednesday and returning the following day
 
-Gold:    ['O', 'O', 'O', 'O', 'B-fromloc.city_name', 'O', 'B-toloc.city_name', 'O', 'B-toloc.city_name', 'I-toloc.city_name']
-CRF:     ['O', 'O', 'O', 'O', 'B-fromloc.city_name', 'O', 'B-toloc.city_name', 'O', 'B-toloc.city_name', 'I-toloc.city_name']
-BiLSTM:  ['O', 'O', 'O', 'O', 'B-fromloc.city_name', 'O', 'B-toloc.city_name', 'O', 'O', 'O']
+Gold:    ['O', 'O', 'O', 'O', 'O', 'B-fromloc.city_name', 'I-fromloc.city_name', 'O', 'B-toloc.city_name', 'O', 'B-depart_date.date_relative', 'B-depart_date.day_name', 'O', 'O', 'B-return_date.date_relative', 'I-return_date.date_relative', 'I-return_date.date_relative']
+CRF:     ['O', 'O', 'O', 'O', 'O', 'B-fromloc.city_name', 'I-fromloc.city_name', 'O', 'B-toloc.city_name', 'O', 'B-depart_date.date_relative', 'B-depart_date.day_name', 'O', 'O', 'B-return_date.date_relative', 'I-return_date.date_relative', 'I-return_date.date_relative']
+BiLSTM:  ['O', 'O', 'O', 'O', 'O', 'B-fromloc.city_name', 'I-fromloc.city_name', 'O', 'B-toloc.city_name', 'O', 'B-depart_date.date_relative', 'B-depart_date.day_name', 'O', 'O', 'B-return_date.today_relative', 'I-return_date.today_relative', 'I-return_date.today_relative']
 
-Number of wrong tokens: CRF=0, BiLSTM=2
+Number of wrong tokens: CRF=0, BiLSTM=3
 
 Token-level differences:
-  token  8: long               gold=B-toloc.city_name            CRF=B-toloc.city_name            BiLSTM=O
-  token  9: beach              gold=I-toloc.city_name            CRF=I-toloc.city_name            BiLSTM=O
+  token 14: the                gold=B-return_date.date_relative  CRF=B-return_date.date_relative  BiLSTM=B-return_date.today_relative
+  token 15: following          gold=I-return_date.date_relative  CRF=I-return_date.date_relative  BiLSTM=I-return_date.today_relative
+  token 16: day                gold=I-return_date.date_relative  CRF=I-return_date.date_relative  BiLSTM=I-return_date.today_relative
 
 Your diagnosis:
-  ________________________________________________
- The BiLSTM has trouble with coordination and entity boundaries in the phrase “to Orlando and Long Beach.” It finds Orlando as 
- a destination but misses the second one, marking both “Long” and “Beach” as O. This shows it struggles to see that “and” introduces 
- another destination and to keep the right span boundaries. On the other hand, the CRF starts a new B-toloc.city_name span for 
- “Long Beach” and labels both destination cities correctly.
+  Both models correctly identify the departure date “next Wednesday” and recognize “the following day” as a return-date expression, but the BiLSTM chooses the wrong return-date subtype. It predicts return_date.today_relative instead of return_date.date_relative for all three tokens. This is therefore not a span-detection or general return-date error; it is a fine-grained label-classification error between two semantically similar categories. The CRF’s lexical and local-context features appear to capture the phrase “the following day” more precisely, while the BiLSTM confuses two closely related relative-date labels.
 
 
 ====================================================================================================
@@ -207,62 +187,52 @@ Token-level differences:
   token 12: city               gold=I-city_name                  CRF=I-fromloc.city_name          BiLSTM=I-toloc.city_name
 
 Your diagnosis:
-Although both models correctly identify the airport and the city spans, they assign the incorrect semantic roles. In their analysis, "La Guardia Airport" is given the label from loc.airport_name 
-rather than the more general airport_name, probably due to the presence of the word "from". The CRF goes beyond this by interpreting "New York City" as an origin, whereas the BiLSTM more sensibly 
-regards New York as a destination but still does not match the general gold label. In general, both models show a bias towards using location labels that are specific to routes when directional 
-prepositions are included.
-
+  Both models recognize “La Guardia Airport” and “New York City” as location expressions, but neither uses the generic labels required by the gold annotation. The CRF labels both locations as fromloc, while the BiLSTM interprets the sentence more like a route and labels the airport as the origin and New York City as the destination. The gold labels, however, use the generic airport_name and city_name categories because the query concerns ground transportation rather than a flight route. This suggests that both models overgeneralize location-role patterns learned from flight queries, while the BiLSTM additionally imposes a directional origin-to-destination interpretation on the sentence.
 
 ====================================================================================================
 Example 9
-Test index: 841
+Test index: 232
 Case type: Both wrong, different ways
 ====================================================================================================
-Sentence: i'd like a flight from cincinnati to newark airport that arrives on saturday before 6 pm
+Sentence: list the distance in miles from new york's la guardia airport to downtown new york city
 
-Gold:    ['O', 'O', 'O', 'O', 'O', 'B-fromloc.city_name', 'O', 'B-toloc.airport_name', 'I-toloc.airport_name', 'O', 'O', 'O', 'B-arrive_date.day_name', 'B-arrive_time.time_relative', 'B-arrive_time.time', 'I-arrive_time.time']
-CRF:     ['O', 'O', 'O', 'O', 'O', 'B-fromloc.city_name', 'O', 'B-toloc.city_name', 'O', 'O', 'O', 'O', 'B-depart_date.day_name', 'B-depart_time.time_relative', 'B-depart_time.time', 'I-depart_time.time']
-BiLSTM:  ['O', 'O', 'O', 'O', 'O', 'B-fromloc.city_name', 'O', 'B-toloc.city_name', 'I-toloc.airport_name', 'O', 'O', 'O', 'B-arrive_date.day_name', 'B-depart_time.time_relative', 'B-arrive_time.time', 'I-arrive_time.time']
+Gold:    ['O', 'O', 'O', 'O', 'O', 'O', 'B-fromloc.city_name', 'I-fromloc.city_name', 'B-fromloc.airport_name', 'I-fromloc.airport_name', 'I-fromloc.airport_name', 'O', 'O', 'B-city_name', 'I-city_name', 'I-city_name']
+CRF:     ['O', 'O', 'O', 'O', 'O', 'O', 'B-fromloc.city_name', 'I-fromloc.city_name', 'B-fromloc.airport_name', 'I-fromloc.airport_name', 'I-fromloc.airport_name', 'O', 'O', 'B-toloc.city_name', 'I-toloc.city_name', 'I-toloc.city_name']
+BiLSTM:  ['O', 'O', 'O', 'O', 'O', 'O', 'B-fromloc.airport_name', 'I-fromloc.airport_name', 'B-fromloc.airport_name', 'I-fromloc.airport_name', 'I-fromloc.airport_name', 'O', 'O', 'B-toloc.city_name', 'I-toloc.city_name', 'I-toloc.city_name']
 
-Number of wrong tokens: CRF=6, BiLSTM=2
+Number of wrong tokens: CRF=3, BiLSTM=5
 
 Token-level differences:
-  token  7: newark             gold=B-toloc.airport_name         CRF=B-toloc.city_name            BiLSTM=B-toloc.city_name
-  token  8: airport            gold=I-toloc.airport_name         CRF=O                            BiLSTM=I-toloc.airport_name
-  token 12: saturday           gold=B-arrive_date.day_name       CRF=B-depart_date.day_name       BiLSTM=B-arrive_date.day_name
-  token 13: before             gold=B-arrive_time.time_relative  CRF=B-depart_time.time_relative  BiLSTM=B-depart_time.time_relative
-  token 14: 6                  gold=B-arrive_time.time           CRF=B-depart_time.time           BiLSTM=B-arrive_time.time
-  token 15: pm                 gold=I-arrive_time.time           CRF=I-depart_time.time           BiLSTM=I-arrive_time.time
+  token  6: new                gold=B-fromloc.city_name          CRF=B-fromloc.city_name          BiLSTM=B-fromloc.airport_name
+  token  7: york's             gold=I-fromloc.city_name          CRF=I-fromloc.city_name          BiLSTM=I-fromloc.airport_name
+  token 13: new                gold=B-city_name                  CRF=B-toloc.city_name            BiLSTM=B-toloc.city_name
+  token 14: york               gold=I-city_name                  CRF=I-toloc.city_name            BiLSTM=I-toloc.city_name
+  token 15: city               gold=I-city_name                  CRF=I-toloc.city_name            BiLSTM=I-toloc.city_name
 
 Your diagnosis:
-The CRF makes the more substantial error by confusing “Newark Airport” with a city and mislabeling the entire arrival date/time phrase as departure-related. The BiLSTM preserves most of the arrival context and partially 
-recognizes the airport span, but still misclassifies “before” as a departure-time relation. Overall, the CRF struggles with both entity type and event-role semantics, while the BiLSTM shows only a localized temporal-role error.
+ Both models make errors in this ground-transportation query, but the BiLSTM makes an additional boundary/type error around “New York’s La Guardia Airport.” The CRF correctly recognizes “New York’s” as a city followed by the airport name, whereas the BiLSTM incorrectly absorbs “New York’s” into the airport slot, possibly because the city name directly modifies “La Guardia Airport.” Both models also label “downtown New York City” as a destination city instead of the generic city_name required by the gold annotation. This example shows that the BiLSTM can blur boundaries between closely connected location expressions, while both models tend to overapply flight-style origin/destination labels to ground-transportation queries.
 
 
 ====================================================================================================
 Example 10
-Test index: 119
+Test index: 790
 Case type: Both wrong, different ways
 ====================================================================================================
-Sentence: what is the ground transportation between the charlotte airport charlotte airport and downtown charlotte
+Sentence: is there ground transportation from the memphis airport into town when if i arrive at 842 in the morning
 
-Gold:    ['O', 'O', 'O', 'O', 'O', 'O', 'O', 'B-airport_name', 'I-airport_name', 'B-city_name', 'I-city_name', 'O', 'O', 'B-city_name']
-CRF:     ['O', 'O', 'O', 'O', 'O', 'O', 'O', 'B-fromloc.airport_name', 'I-fromloc.airport_name', 'I-fromloc.airport_name', 'I-fromloc.airport_name', 'O', 'O', 'B-toloc.city_name']
-BiLSTM:  ['O', 'O', 'O', 'O', 'O', 'O', 'O', 'B-fromloc.airport_name', 'I-fromloc.airport_name', 'I-fromloc.airport_name', 'O', 'O', 'O', 'B-toloc.city_name']
+Gold:    ['O', 'O', 'O', 'O', 'O', 'O', 'B-airport_name', 'I-airport_name', 'O', 'O', 'O', 'O', 'O', 'O', 'O', 'O', 'O', 'O', 'B-period_of_day']
+CRF:     ['O', 'O', 'O', 'O', 'O', 'O', 'B-fromloc.airport_name', 'I-fromloc.airport_name', 'O', 'O', 'O', 'O', 'O', 'O', 'O', 'B-depart_time.time', 'O', 'O', 'B-depart_time.period_of_day']
+BiLSTM:  ['O', 'O', 'O', 'O', 'O', 'O', 'B-fromloc.airport_name', 'I-fromloc.airport_name', 'O', 'O', 'O', 'O', 'O', 'O', 'O', 'B-arrive_time.time', 'O', 'O', 'B-arrive_time.period_of_day']
 
-Number of wrong tokens: CRF=5, BiLSTM=5
+Number of wrong tokens: CRF=4, BiLSTM=4
 
 Token-level differences:
-  token  7: charlotte          gold=B-airport_name               CRF=B-fromloc.airport_name       BiLSTM=B-fromloc.airport_name
-  token  8: airport            gold=I-airport_name               CRF=I-fromloc.airport_name       BiLSTM=I-fromloc.airport_name
-  token  9: charlotte          gold=B-city_name                  CRF=I-fromloc.airport_name       BiLSTM=I-fromloc.airport_name
-  token 10: airport            gold=I-city_name                  CRF=I-fromloc.airport_name       BiLSTM=O
-  token 13: charlotte          gold=B-city_name                  CRF=B-toloc.city_name            BiLSTM=B-toloc.city_name
+  token  6: memphis            gold=B-airport_name               CRF=B-fromloc.airport_name       BiLSTM=B-fromloc.airport_name
+  token  7: airport            gold=I-airport_name               CRF=I-fromloc.airport_name       BiLSTM=I-fromloc.airport_name
+  token 15: 842                gold=O                            CRF=B-depart_time.time           BiLSTM=B-arrive_time.time
+  token 18: morning            gold=B-period_of_day              CRF=B-depart_time.period_of_day  BiLSTM=B-arrive_time.period_of_day
 
 Your diagnosis:
-Both models struggle with the repeated “Charlotte airport” phrase, causing entity-boundary and semantic-role errors. The CRF incorrectly extends the first airport span across the second 
-“Charlotte airport,” while the BiLSTM also absorbs the second “Charlotte” into the airport span but drops the following “airport” token. In addition, both models replace the generic airport_name
- and city_name labels with route-specific fromloc.* and toloc.* labels. This suggests that repeated location names make it difficult for both models to separate airport and city entities and 
- assign the correct location role.
+Both models over-specify several slots in this ground-transportation query. They label “Memphis Airport” as a fromloc.airport_name even though the gold annotation uses the generic airport_name, and both incorrectly treat “842” as a time slot even though it is labeled O in the gold data. They also label “morning” as either departure or arrival time instead of the generic period_of_day. The BiLSTM at least associates the time expressions with arrival because of the explicit word “arrive,” while the CRF incorrectly assigns them to departure. This example suggests that both models have difficulty adapting flight-oriented slot roles to ground-transportation queries, while the CRF additionally shows its recurring arrival-versus-departure confusion.
 
 

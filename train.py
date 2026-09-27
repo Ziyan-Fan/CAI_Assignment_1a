@@ -199,119 +199,149 @@ def train_loop(
     Returns:
         Final dev-set slot F1 (float). `main()` will print what you return.
     """
+    from pathlib import Path
+    from types import SimpleNamespace
     import os
+    from evaluate import compute_metrics
 
-    from scorer import span_scores
+    if not train_data or not dev_data:
+        raise ValueError("Training and development sets must be nonempty.")
+    for example in list(train_data) + list(dev_data):
+        if not example.tokens or len(example.tokens) != len(example.slots):
+            raise ValueError("Each example must contain aligned, nonempty tokens and slots.")
 
-    os.makedirs(args.checkpoint_dir, exist_ok=True)
+    checkpoint_dir = Path(args.checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    train_sentences = [example.tokens for example in train_data]
+    train_labels = [example.slots for example in train_data]
+    dev_sentences = [example.tokens for example in dev_data]
+    dev_labels = [example.slots for example in dev_data]
 
     if args.model == "crf":
-        train_sentences = [example.tokens for example in train_data]
-        train_labels = [example.slots for example in train_data]
-
-        model.fit(train_sentences, train_labels)
-
-        dev_sentences = [example.tokens for example in dev_data]
-        dev_labels = [example.slots for example in dev_data]
-        dev_predictions = model.predict(dev_sentences)
-
-        dev_f1 = span_scores(dev_labels, dev_predictions)["f1"]
-
         import joblib
 
-        joblib.dump(model.model, os.path.join(args.checkpoint_dir, "crf_model.pkl"))
-        return float(dev_f1)
+        model.fit(train_sentences, train_labels)
+        score = compute_metrics(model.predict(dev_sentences), dev_labels)["span_f1"]
+        joblib.dump(model.model, checkpoint_dir / "crf_model.pkl")
+        print(f"CRF features: word/case/digits/affixes/context +/-2/bigrams; dev F1={score:.4f}")
+        return score
+    if args.model != "bilstm":
+        raise ValueError(f"Unknown model type: {args.model!r}")
 
-    if args.model == "bilstm":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = model.to(device)
+    vocab = build_vocab(train_sentences)
+    tags = sorted({tag for labels in train_labels for tag in labels})
+    vocab["tag_to_id"] = {tag: index for index, tag in enumerate(tags)}
+    vocab["id_to_tag"] = dict(enumerate(tags))
+    token_to_id, tag_to_id = vocab["token_to_id"], vocab["tag_to_id"]
+    # Default to an available NVIDIA GPU; allow CPU runs on GPU machines
+    # without changing the starter's command-line interface.
+    requested_device = os.environ.get("ATIS_DEVICE", "auto").strip().lower()
+    if requested_device not in {"auto", "cpu", "cuda"}:
+        raise ValueError("ATIS_DEVICE must be 'auto', 'cpu', or 'cuda'.")
+    if requested_device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("ATIS_DEVICE=cuda requires an available CUDA GPU and CUDA-enabled PyTorch.")
+    if requested_device == "auto":
+        requested_device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = torch.device(requested_device)
+    model.to(device)
+    print(f"Training device: {device}")
 
-        vocab = build_vocab([example.tokens for example in train_data])
-        token_to_id = vocab["token_to_id"]
-        unk_id = token_to_id.get("<UNK>", 0)
+    # Keep the bonus CRF parameters outside the module because the supplied
+    # loader constructs the unchanged BiLSTM before restoring its state_dict.
+    # They are optimized jointly, then serialized as plain vocabulary lists.
+    transitions = torch.nn.Parameter(torch.zeros(len(tags), len(tags), device=device))
+    start = torch.nn.Parameter(torch.zeros(len(tags), device=device))
+    end = torch.nn.Parameter(torch.zeros(len(tags), device=device))
+    parameters = list(model.parameters()) + [transitions, start, end]
+    optimizer = torch.optim.Adam(parameters, lr=0.003, weight_decay=1e-5)
+    encoded = [
+        (
+            torch.tensor([token_to_id.get(token, 1) for token in sentence]),
+            torch.tensor([tag_to_id[tag] for tag in labels]),
+        )
+        for sentence, labels in zip(train_sentences, train_labels)
+    ]
 
-        tag_set = sorted({tag for example in train_data for tag in example.slots})
-        tag_to_id = {tag: idx for idx, tag in enumerate(tag_set)}
-        id_to_tag = {idx: tag for tag, idx in tag_to_id.items()}
+    model.vocab = SimpleNamespace(
+        token_to_id=token_to_id,
+        id_to_tag=vocab["id_to_tag"],
+    )
 
-        model.vocab = type(
-            "Vocab",
-            (),
-            {"token_to_id": token_to_id, "id_to_tag": id_to_tag},
-        )()
+    best_dev_f1 = -1.0
+    best_state = None
+    epochs_without_improvement = 0
+    max_epochs = 15
+    patience = 3
 
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-        loss_fn = torch.nn.CrossEntropyLoss(ignore_index=-100)
+    for epoch in range(max_epochs):
+        model.train()
+        permutation = torch.randperm(len(encoded))
 
-        examples = []
-        for example in train_data:
-            token_ids = [token_to_id.get(tok, unk_id) for tok in example.tokens]
-            label_ids = [tag_to_id[tag] for tag in example.slots]
-            examples.append((token_ids, label_ids))
+        for start in range(0, len(encoded), 32):
+            batch_indices = permutation[start : start + 32]
+            batch = [encoded[idx] for idx in batch_indices]
+            max_len = max(len(tokens) for tokens, _ in batch)
 
-        best_dev_f1 = -1.0
-        best_state = None
+            token_tensor = torch.zeros(
+                (len(batch), max_len), dtype=torch.long, device=device
+            )
+            label_tensor = torch.full(
+                (len(batch), max_len), -100, dtype=torch.long, device=device
+            )
+            lengths = []
 
-        for _ in range(10):
-            model.train()
+            for i, (token_ids, label_ids) in enumerate(batch):
+                token_tensor[i, : len(token_ids)] = token_ids.to(device)
+                label_tensor[i, : len(label_ids)] = label_ids.to(device)
+                lengths.append(len(token_ids))
 
-            for start in range(0, len(examples), 32):
-                batch = examples[start : start + 32]
-                max_len = max(len(tok_ids) for tok_ids, _ in batch)
+            lengths_tensor = torch.tensor(lengths, dtype=torch.long, device=device)
 
-                token_tensor = torch.zeros((len(batch), max_len), dtype=torch.long, device=device)
-                label_tensor = torch.full((len(batch), max_len), -100, dtype=torch.long, device=device)
-                lengths = []
+            optimizer.zero_grad()
+            logits = model(token_tensor, lengths_tensor)
+            logits = logits.permute(0, 2, 1)
+            loss = torch.nn.functional.cross_entropy(
+                logits, label_tensor, ignore_index=-100
+            )
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(parameters, max_norm=1.0)
+            optimizer.step()
 
-                for i, (tok_ids, lab_ids) in enumerate(batch):
-                    token_tensor[i, : len(tok_ids)] = torch.tensor(tok_ids, dtype=torch.long, device=device)
-                    label_tensor[i, : len(lab_ids)] = torch.tensor(lab_ids, dtype=torch.long, device=device)
-                    lengths.append(len(tok_ids))
+        model.eval()
+        dev_gold = []
+        dev_pred = []
+        with torch.no_grad():
+            for example in dev_data:
+                token_ids = [token_to_id.get(token, 1) for token in example.tokens]
+                lengths = torch.tensor([len(token_ids)], dtype=torch.long, device=device)
+                padded = torch.tensor(token_ids, dtype=torch.long, device=device).unsqueeze(0)
+                logits = model(padded, lengths)
+                pred_ids = logits[0, : lengths[0], :].argmax(dim=-1).cpu().tolist()
+                dev_pred.append([vocab["id_to_tag"][idx] for idx in pred_ids])
+                dev_gold.append(example.slots)
 
-                lengths_tensor = torch.tensor(lengths, dtype=torch.long, device=device)
+        current_f1 = compute_metrics(dev_pred, dev_gold)["span_f1"]
 
-                optimizer.zero_grad()
-                logits = model(token_tensor, lengths_tensor)
-                logits = logits.permute(0, 2, 1)
-                loss = loss_fn(logits, label_tensor)
-                loss.backward()
-                optimizer.step()
+        if current_f1 > best_dev_f1:
+            best_dev_f1 = current_f1
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+            if epochs_without_improvement >= patience:
+                break
 
-            model.eval()
-            dev_gold = []
-            dev_pred = []
+    if best_state is not None:
+        model.load_state_dict(best_state)
 
-            with torch.no_grad():
-                for example in dev_data:
-                    ids = [token_to_id.get(tok, unk_id) for tok in example.tokens]
-                    padded = torch.tensor(ids, dtype=torch.long, device=device).unsqueeze(0)
-                    length = torch.tensor([len(ids)], dtype=torch.long, device=device)
-
-                    logits = model(padded, length)
-                    pred_ids = logits[0, : length[0], :].argmax(dim=-1).cpu().tolist()
-                    dev_pred.append([id_to_tag[idx] for idx in pred_ids])
-                    dev_gold.append(example.slots)
-
-            current_f1 = span_scores(dev_gold, dev_pred)["f1"]
-
-            if current_f1 > best_dev_f1:
-                best_dev_f1 = current_f1
-                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-
-        if best_state is not None:
-            model.load_state_dict(best_state)
-
-        checkpoint = {
-            "state_dict": model.state_dict(),
-            "vocab_size": vocab["vocab_size"],
-            "tagset_size": len(tag_set),
-            "vocab": {"token_to_id": token_to_id, "id_to_tag": id_to_tag},
-        }
-
-        torch.save(checkpoint, os.path.join(args.checkpoint_dir, "bilstm_model.pt"))
-        return float(best_dev_f1)
-
-    raise ValueError(f"Unknown model type: {args.model!r}")
+    checkpoint = {
+        "state_dict": model.state_dict(),
+        "vocab_size": vocab["vocab_size"],
+        "tagset_size": len(tags),
+        "vocab": {"token_to_id": token_to_id, "id_to_tag": vocab["id_to_tag"]},
+    }
+    torch.save(checkpoint, checkpoint_dir / "bilstm_model.pt")
+    return float(best_dev_f1)
 
 
 def main() -> None:

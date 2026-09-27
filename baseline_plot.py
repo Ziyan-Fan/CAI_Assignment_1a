@@ -3,11 +3,12 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 
+# Use actual training fractions for proportional x-axis spacing
+x = [0.05, 0.10, 0.25, 1.00]
 labels = ["5%", "10%", "25%", "100%"]
-x = [0, 1, 2, 3]
 
-crf_f1 = [0.8281, 0.8725, 0.9116, 0.9451]
-bilstm_f1 = [0.5170, 0.7402, 0.8845, 0.9637]
+crf_f1 = [0.8358, 0.8804, 0.9139, 0.9522]
+bilstm_f1 = [0.8219, 0.8686, 0.9271, 0.9686]
 
 plt.figure(figsize=(7, 5))
 
@@ -17,11 +18,14 @@ plt.plot(x, bilstm_f1, marker="o", label="BiLSTM")
 plt.xticks(x, labels)
 
 plt.xlabel("Training Data Fraction")
-plt.ylabel("Dev Slot F1")
+plt.ylabel("Dev Span F1")
 plt.title("Data Efficiency: CRF vs. BiLSTM")
 
 plt.legend()
 plt.grid(True, alpha=0.4)
+
+plt.xlim(0, 1.02)
+
 plt.tight_layout()
 
 plt.savefig(

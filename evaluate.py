@@ -138,12 +138,21 @@ def compute_metrics(
     """
     from scorer import span_scores, token_scores
 
-    token_metrics = token_scores(gold, predictions)
-    span_metrics = span_scores(gold, predictions)
+    if len(predictions) != len(gold) or any(
+        len(predicted) != len(expected)
+        for predicted, expected in zip(predictions, gold)
+    ):
+        raise ValueError(
+            "Predictions and gold labels must align "
+            "sentence-for-sentence and token-for-token."
+        )
+
+    if not any(gold):
+        return {"token_f1": 0.0, "span_f1": 0.0}
 
     return {
-        "token_f1": float(token_metrics["f1"]),
-        "span_f1": float(span_metrics["f1"]),
+        "token_f1": float(token_scores(gold, predictions)["f1"]),
+        "span_f1": float(span_scores(gold, predictions)["f1"]),
     }
 
 

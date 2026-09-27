@@ -3,13 +3,21 @@ import os
 from evaluate import load_model, load_eval_data
 
 
+# ============================================================
+# Helper functions
+# ============================================================
+
 def mismatches(gold, pred):
+    """Count token-level prediction errors."""
     assert len(gold) == len(pred)
     return sum(g != p for g, p in zip(gold, pred))
 
 
 def token_differences(sentence, gold, crf_pred, bilstm_pred):
-    """Return readable lines only for tokens where at least one model is wrong."""
+    """
+    Return readable lines only for tokens where at least
+    one model makes an error.
+    """
     lines = []
 
     for i, (token, g, c, b) in enumerate(
@@ -27,11 +35,17 @@ def token_differences(sentence, gold, crf_pred, bilstm_pred):
 
 
 def format_example(number, case_type, example):
+    """
+    Format one selected test-set failure for manual analysis.
+    """
     test_index, sentence, gold, crf_pred, bilstm_pred = example
 
     assert len(sentence) == len(gold)
     assert len(gold) == len(crf_pred)
     assert len(gold) == len(bilstm_pred)
+
+    crf_errors = mismatches(gold, crf_pred)
+    bilstm_errors = mismatches(gold, bilstm_pred)
 
     output = []
 
@@ -51,8 +65,8 @@ def format_example(number, case_type, example):
 
     output.append(
         f"Number of wrong tokens: "
-        f"CRF={mismatches(gold, crf_pred)}, "
-        f"BiLSTM={mismatches(gold, bilstm_pred)}"
+        f"CRF={crf_errors}, "
+        f"BiLSTM={bilstm_errors}"
     )
 
     output.append("")
@@ -74,53 +88,84 @@ def format_example(number, case_type, example):
     output.append("Your diagnosis:")
     output.append("  ________________________________________________")
     output.append("  ________________________________________________")
+    output.append("  ________________________________________________")
     output.append("")
 
     return "\n".join(output)
 
 
-# --------------------------------------------------
-# Checkpoints
-# --------------------------------------------------
+# ============================================================
+# Final model checkpoints
+# ============================================================
 
-crf_dir = "checkpoints/error_analysis_crf"
-bilstm_dir = "checkpoints/error_analysis_bilstm"
+crf_dir = "checkpoints/final_crf_100"
+bilstm_dir = "checkpoints/final_bilstm_100"
 
 for folder in [crf_dir, bilstm_dir]:
-    if not os.path.exists(folder):
-        print(f"Missing checkpoint directory: {folder}")
-        raise SystemExit(1)
+    if not os.path.isdir(folder):
+        raise FileNotFoundError(
+            f"Missing checkpoint directory: {folder}"
+        )
 
 
-# --------------------------------------------------
-# Load models and test data
-# --------------------------------------------------
+print("Using checkpoints:")
+print(f"  CRF:     {crf_dir}")
+print(f"  BiLSTM:  {bilstm_dir}")
 
-crf_model = load_model("crf", crf_dir)
-bilstm_model = load_model("bilstm", bilstm_dir)
+
+# ============================================================
+# Load final models and test set
+# ============================================================
+
+crf_model = load_model(
+    "crf",
+    crf_dir,
+)
+
+bilstm_model = load_model(
+    "bilstm",
+    bilstm_dir,
+)
 
 sentences, gold_labels = load_eval_data("test")
 
-crf_vocab = getattr(crf_model, "vocab", None)
-bilstm_vocab = getattr(bilstm_model, "vocab", None)
+crf_vocab = getattr(
+    crf_model,
+    "vocab",
+    None,
+)
 
-crf_preds = crf_model.predict(sentences, crf_vocab)
-bilstm_preds = bilstm_model.predict(sentences, bilstm_vocab)
+bilstm_vocab = getattr(
+    bilstm_model,
+    "vocab",
+    None,
+)
+
+crf_preds = crf_model.predict(
+    sentences,
+    crf_vocab,
+)
+
+bilstm_preds = bilstm_model.predict(
+    sentences,
+    bilstm_vocab,
+)
 
 assert len(sentences) == len(gold_labels)
 assert len(sentences) == len(crf_preds)
 assert len(sentences) == len(bilstm_preds)
 
 
-# --------------------------------------------------
-# Categorize failures
-# --------------------------------------------------
+# ============================================================
+# Categorize test-set failures
+# ============================================================
 
 cases = {
     "CRF wrong, BiLSTM correct": [],
     "BiLSTM wrong, CRF correct": [],
     "Both wrong, different ways": [],
 }
+
 
 for test_index, (
     sentence,
@@ -147,38 +192,65 @@ for test_index, (
         bilstm_pred,
     )
 
+    # CRF fails but BiLSTM gets whole sentence correct
     if crf_bad and not bilstm_bad:
-        cases["CRF wrong, BiLSTM correct"].append(example)
+        cases[
+            "CRF wrong, BiLSTM correct"
+        ].append(example)
 
+    # BiLSTM fails but CRF gets whole sentence correct
     elif bilstm_bad and not crf_bad:
-        cases["BiLSTM wrong, CRF correct"].append(example)
+        cases[
+            "BiLSTM wrong, CRF correct"
+        ].append(example)
 
-    elif crf_bad and bilstm_bad and crf_pred != bilstm_pred:
-        cases["Both wrong, different ways"].append(example)
-
-
-# --------------------------------------------------
-# Sort by largest error difference
-# --------------------------------------------------
-
-for key in cases:
-    cases[key].sort(
-        key=lambda x: max(
-            mismatches(x[2], x[3]),
-            mismatches(x[2], x[4]),
-        ),
-        reverse=True,
-    )
+    # Both fail, but they make different predictions
+    elif (
+        crf_bad
+        and bilstm_bad
+        and crf_pred != bilstm_pred
+    ):
+        cases[
+            "Both wrong, different ways"
+        ].append(example)
 
 
-# --------------------------------------------------
-# Select 10 total examples
+# ============================================================
+# Sort examples
+#
+# For model-specific failures, put examples with more
+# mistakes first.
+#
+# For both-wrong examples, use total number of errors.
+# ============================================================
+
+cases["CRF wrong, BiLSTM correct"].sort(
+    key=lambda x: mismatches(x[2], x[3]),
+    reverse=True,
+)
+
+cases["BiLSTM wrong, CRF correct"].sort(
+    key=lambda x: mismatches(x[2], x[4]),
+    reverse=True,
+)
+
+cases["Both wrong, different ways"].sort(
+    key=lambda x: (
+        mismatches(x[2], x[3])
+        + mismatches(x[2], x[4])
+    ),
+    reverse=True,
+)
+
+
+# ============================================================
+# Select 10 examples
 #
 # Target:
 #   4 CRF-only failures
 #   3 BiLSTM-only failures
 #   3 both-wrong failures
-# --------------------------------------------------
+# ============================================================
 
 target_counts = {
     "CRF wrong, BiLSTM correct": 4,
@@ -188,15 +260,21 @@ target_counts = {
 
 selected = []
 
+
 for case_type, target in target_counts.items():
-    for example in cases[case_type][:target]:
-        selected.append((case_type, example))
+
+    examples = cases[case_type]
+
+    for example in examples[:target]:
+        selected.append(
+            (case_type, example)
+        )
 
 
-# --------------------------------------------------
-# If fewer than 10 were found, fill from remaining
-# unused examples
-# --------------------------------------------------
+# ============================================================
+# If fewer than 10 examples were available in the target
+# categories, fill the remaining slots with unused failures.
+# ============================================================
 
 if len(selected) < 10:
 
@@ -208,17 +286,30 @@ if len(selected) < 10:
     remaining = []
 
     for case_type, examples in cases.items():
+
         for example in examples:
-            if example[0] not in already_selected:
 
-                severity = max(
-                    mismatches(example[2], example[3]),
-                    mismatches(example[2], example[4]),
-                )
+            test_index = example[0]
 
-                remaining.append(
-                    (severity, case_type, example)
+            if test_index in already_selected:
+                continue
+
+            gold = example[2]
+            crf_pred = example[3]
+            bilstm_pred = example[4]
+
+            severity = (
+                mismatches(gold, crf_pred)
+                + mismatches(gold, bilstm_pred)
+            )
+
+            remaining.append(
+                (
+                    severity,
+                    case_type,
+                    example,
                 )
+            )
 
     remaining.sort(
         key=lambda x: x[0],
@@ -226,35 +317,72 @@ if len(selected) < 10:
     )
 
     for _, case_type, example in remaining:
+
         if len(selected) >= 10:
             break
 
         selected.append(
-            (case_type, example)
+            (
+                case_type,
+                example,
+            )
         )
 
 
-# --------------------------------------------------
-# Write output file
-# --------------------------------------------------
+# ============================================================
+# Sanity check
+# ============================================================
+
+if len(selected) < 10:
+    print(
+        f"WARNING: Only {len(selected)} suitable "
+        "failure examples were found."
+    )
+
+
+# ============================================================
+# Write Part D candidate file
+# ============================================================
 
 output_file = "part_d_examples.txt"
 
-with open(output_file, "w") as f:
 
-    f.write("PART D — TEST-SET ERROR ANALYSIS CANDIDATES\n")
+with open(
+    output_file,
+    "w",
+    encoding="utf-8",
+) as f:
+
+    f.write(
+        "PART D — TEST-SET ERROR ANALYSIS CANDIDATES\n"
+    )
     f.write("=" * 100 + "\n\n")
 
     f.write(
-        "These are 10 automatically selected test-set failures.\n"
-        "Use the token-level differences to write your own diagnosis "
-        "for each example.\n\n"
+        f"CRF checkpoint: {crf_dir}\n"
+    )
+    f.write(
+        f"BiLSTM checkpoint: {bilstm_dir}\n\n"
     )
 
-    for number, (case_type, example) in enumerate(
+    f.write(
+        "These are automatically selected test-set "
+        "failures from the final 100% models.\n"
+    )
+
+    f.write(
+        "Use the token-level differences below to write "
+        "your own diagnosis for each example.\n\n"
+    )
+
+    for number, (
+        case_type,
+        example,
+    ) in enumerate(
         selected,
         start=1,
     ):
+
         f.write(
             format_example(
                 number,
@@ -266,21 +394,48 @@ with open(output_file, "w") as f:
         f.write("\n\n")
 
 
-# --------------------------------------------------
-# Summary
-# --------------------------------------------------
+# ============================================================
+# Terminal summary
+# ============================================================
 
-print(f"Saved {len(selected)} examples to: {output_file}")
+print()
+print(
+    f"Saved {len(selected)} examples to "
+    f"{output_file}"
+)
 
 print("\nAvailable failures:")
+
 for key, examples in cases.items():
-    print(f"  {key}: {len(examples)}")
+    print(
+        f"  {key}: {len(examples)}"
+    )
 
 print("\nSelected:")
+
 for key in cases:
+
     count = sum(
         1
         for case_type, _ in selected
         if case_type == key
     )
-    print(f"  {key}: {count}")
+
+    print(
+        f"  {key}: {count}"
+    )
+
+print("\nSelected test indices:")
+
+for number, (
+    case_type,
+    example,
+) in enumerate(
+    selected,
+    start=1,
+):
+    print(
+        f"  Example {number}: "
+        f"test index {example[0]} "
+        f"({case_type})"
+    )
